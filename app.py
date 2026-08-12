@@ -6,7 +6,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 import os
 import sys
 
@@ -230,52 +230,160 @@ if st.session_state.page == "cover":
 
 elif st.session_state.page == "data":
     st.markdown("## 📊 数据中心")
-    st.markdown("管理本地数据库、拉取历史数据、查看行情")
 
-    if not st.session_state.data_loaded:
-        df = load_mock_data()
-        st.session_state.df = df
-        st.session_state.data_loaded = True
+    from data import DataSource, RealtimeKLine
+
+    # ── 搜索栏 ──
+    col_search, col_date1, col_date2, col_btn = st.columns([2, 1, 1, 0.8])
+    with col_search:
+        keyword = st.text_input("🔍 股票代码或名称", "600519", placeholder="输入 600519 或 茅台")
+    with col_date1:
+        start_date = st.date_input("起始", date(2024, 1, 1))
+    with col_date2:
+        end_date = st.date_input("结束", date.today())
+    with col_btn:
+        st.markdown("<br>", unsafe_allow_html=True)
+        fetch_btn = st.button("🔍 拉取", use_container_width=True)
+
+    # ── 自动加载 ──
+    if fetch_btn or ("data_keyword" not in st.session_state):
+        st.session_state.data_keyword = keyword
+        with st.spinner(f"正在拉取 {keyword} ..."):
+            try:
+                # 尝试真实数据源，失败则 mock
+                try:
+                    ds = DataSource("crocodile.db")
+                    df = ds.search_and_fetch(keyword, start_date, end_date)
+                    if df is None or df.empty:
+                        df = ds.get_history(keyword, start_date, end_date)
+                    source = "akshare" if df is not None and not df.empty else "mock"
+                except Exception:
+                    df = None
+                    source = "mock"
+
+                if df is None or df.empty:
+                    from data.fetcher_backend import FetcherBackend
+                    class MockFetch(FetcherBackend):
+                        @property
+                        def name(self): return 'mock'
+                        def fetch_daily_kline(self, sym, s=None, e=None):
+                            dates = pd.date_range(s or '2024-01-01', e or datetime.now().date(), freq='B')
+                            close = 100*(1+np.cumsum(np.random.randn(len(dates))*0.015))
+                            return pd.DataFrame({'symbol':sym,'date':dates,'open':close*0.998,'high':close*1.005,'low':close*0.995,'close':close,'volume':np.random.randint(5000,50000,len(dates)),'amount':close*np.random.randint(5000,50000,len(dates))})
+                        def fetch_realtime_quote(self, syms): return pd.DataFrame()
+                        def search_symbols(self, k): return pd.DataFrame()
+                    ds_mock = DataSource("_tmp_dash.db", MockFetch())
+                    df = ds_mock.search_and_fetch(keyword, start_date, end_date)
+                    source = "mock"
+
+                st.session_state.df = df if df is not None and not df.empty else load_mock_data()
+                st.session_state.data_loaded = True
+                st.session_state.data_source = source
+                st.session_state.data_symbol = keyword
+            except Exception as e:
+                st.error(f"拉取失败: {e}")
+                st.session_state.df = load_mock_data()
+                st.session_state.data_loaded = True
+                st.session_state.data_source = "mock (fallback)"
 
     df = st.session_state.df
 
-    # 数据概览
-    c1, c2, c3, c4 = st.columns(4)
+    # ── 数据概览 ──
+    src_label = st.session_state.get("data_source", "mock")
+    sym_label = st.session_state.get("data_symbol", keyword)
+    st.caption(f"📡 数据源: {src_label} | 标的: {sym_label}")
+
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        st.markdown(f'<div class="metric-card"><div class="metric-value">{len(df)}</div><div class="metric-label">K 线条数</div></div>', unsafe_allow_html=True)
+        st.metric("K线条数", len(df))
     with c2:
-        st.markdown(f'<div class="metric-card"><div class="metric-value">{df.index[0].strftime("%Y-%m-%d")}</div><div class="metric-label">起始日期</div></div>', unsafe_allow_html=True)
+        st.metric("起始", df.index[0].strftime("%Y-%m-%d") if hasattr(df.index[0], 'strftime') else str(df.index[0])[:10])
     with c3:
-        st.markdown(f'<div class="metric-card"><div class="metric-value">{df.index[-1].strftime("%Y-%m-%d")}</div><div class="metric-label">结束日期</div></div>', unsafe_allow_html=True)
+        st.metric("结束", df.index[-1].strftime("%Y-%m-%d") if hasattr(df.index[-1], 'strftime') else str(df.index[-1])[:10])
     with c4:
         ret = (df["close"].iloc[-1] / df["close"].iloc[0] - 1) * 100
-        color = "#e74c3c" if ret > 0 else "#27ae60"
-        st.markdown(f'<div class="metric-card"><div class="metric-value" style="color:{color}">{ret:+.2f}%</div><div class="metric-label">区间涨跌</div></div>', unsafe_allow_html=True)
+        st.metric("涨跌", f"{ret:+.1f}%")
+    with c5:
+        st.metric("数据源", src_label)
 
-    # 数据表格 + K线图
-    tab1, tab2, tab3 = st.tabs(["📋 数据表", "📈 K线图", "🔢 指标预览"])
+    # ── 标签页 ──
+    tab1, tab2, tab3, tab4 = st.tabs(["📋 数据表", "📈 K线图", "🔢 指标", "⚡ 实时K线"])
 
     with tab1:
-        st.dataframe(df.tail(20), use_container_width=True, height=400)
+        st.dataframe(df.tail(30), use_container_width=True, height=400)
         csv = df.to_csv().encode("utf-8")
-        st.download_button("⬇️ 下载 CSV", csv, "ohlcv.csv", "text/csv")
+        st.download_button("⬇️ 下载 CSV", csv, f"{sym_label}_ohlcv.csv", "text/csv")
 
     with tab2:
         from visualization import plot_kline
         try:
-            fig, ax = plot_kline(df.iloc[-120:], title="Price Chart", cn_style=True)
+            fig, ax = plot_kline(df.iloc[-120:], title=f"{sym_label} K线", cn_style=True)
             st.pyplot(fig)
         except Exception:
-            st.line_chart(df["close"].iloc[-120:], height=400)
+            st.line_chart(df["close"].iloc[-200:], height=450)
 
     with tab3:
         dfi = compute_indicators_df(df)
         st.dataframe(dfi.tail(10), use_container_width=True, height=300)
-        cols = st.columns(2)
-        with cols[0]:
-            st.metric("指标总数", len([c for c in dfi.columns if c not in ("open","high","low","close","volume")]))
-        with cols[1]:
-            st.metric("有效行数", len(dfi))
+        c_i1, c_i2 = st.columns(2)
+        c_i1.metric("指标数", len([c for c in dfi.columns if c not in ("open","high","low","close","volume")]))
+        c_i2.metric("有效行", len(dfi))
+
+    with tab4:
+        st.markdown("#### ⚡ 实时 K 线模拟器")
+        st.caption("模拟 tick 数据 → 合成 1m/5m K 线")
+
+        from data import RealtimeKLine
+        if "rt_kline" not in st.session_state:
+            st.session_state.rt_kline = RealtimeKLine(freqs=["1m", "5m"])
+            st.session_state.rt_symbol = sym_label
+
+        kline = st.session_state.rt_kline
+        if st.session_state.rt_symbol != sym_label:
+            kline.clear()
+            st.session_state.rt_symbol = sym_label
+
+        ck1, ck2 = st.columns([1, 3])
+        with ck1:
+            n_ticks = st.slider("模拟 tick 数", 30, 300, 120, 30, key="rt_ticks")
+            if st.button("▶️ 生成实时 K 线", use_container_width=True, key="rt_gen"):
+                kline.clear()
+                now = datetime.now()
+                base_px = df["close"].iloc[-1] if not df.empty else 100.0
+                for i in range(n_ticks):
+                    t = now + timedelta(seconds=i * 5)
+                    px = base_px * (1 + np.random.randn() * 0.002)
+                    vol = np.random.randint(500, 5000)
+                    kline.feed(sym_label, px, vol, px * vol, t)
+                kline.flush()
+
+        with ck2:
+            if kline.bar_count > 0:
+                bars_1m = kline.get_bars(st.session_state.rt_symbol, "1m")
+                bars_5m = kline.get_bars(st.session_state.rt_symbol, "5m")
+
+                cm1, cm2 = st.columns(2)
+                cm1.metric("1m K线", len(bars_1m))
+                cm2.metric("5m K线", len(bars_5m))
+
+                if not bars_1m.empty:
+                    st.markdown("**1分钟 K线:**")
+                    st.dataframe(bars_1m.tail(10).style.format({
+                        'open': '{:.2f}', 'high': '{:.2f}', 'low': '{:.2f}',
+                        'close': '{:.2f}', 'volume': '{:.0f}'
+                    }), use_container_width=True, height=250)
+
+                if not bars_1m.empty:
+                    st.markdown("**实时价格走势:**")
+                    chart_data = bars_1m[["close"]].reset_index()
+                    st.line_chart(chart_data.set_index("datetime")["close"], height=200)
+
+                # 当前 bar
+                cur = kline.get_current(st.session_state.rt_symbol, "1m")
+                if cur:
+                    st.caption(f"当前未闭合 1m bar: O={cur.open:.2f} H={cur.high:.2f} L={cur.low:.2f} C={cur.close:.2f}")
+            else:
+                st.info("点击「生成实时 K 线」模拟 tick 数据")
 
 
 # ╔══════════════════════════════════════════════════╗
