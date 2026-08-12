@@ -16,6 +16,7 @@ from .fetcher_akshare import AkshareBackend
 from .historical_fetcher import HistoricalFetcher
 from .realtime_fetcher import RealtimeFetcher
 from .realtime_recorder import RealtimeRecorder
+from .realtime_kline import RealtimeKLine
 from .indicators import IndicatorCalculator, compute_indicators
 
 __all__ = [
@@ -26,6 +27,7 @@ __all__ = [
     "HistoricalFetcher",
     "RealtimeFetcher",
     "RealtimeRecorder",
+    "RealtimeKLine",
     "IndicatorCalculator",
     "compute_indicators",
 ]
