@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Test artifacts
+_diag.py
+_test_*.py
+test_*.db
+*_diag_test*
+*_test_bt*
+*_test_ind*
+*_test_robot*
+*_test_notify*
+*_debug*
+
+# Secrets / auth
+credentials/
+*.pem
+*.key
